@@ -116,8 +116,18 @@ class TestLegacyHookCode:
         assert req.hooks.code == LEGACY_HOOKS["code"]
         assert req.hooks.hooks == []
 
-    @pytest.mark.parametrize("hooks_payload", [LEGACY_HOOKS, DECLARATIVE_HOOKS])
-    def test_any_hooks_payload_403_when_disabled(self, server_module, monkeypatch, stock_client, hooks_payload):
+    # Any hooks payload is refused while hooks are disabled, but the detail
+    # must not mislead legacy callers: enabling the flag would not run
+    # hooks.code (removed in 0.9.0), so payloads carrying it get a removal
+    # message instead of the generic 'set CRAWL4AI_HOOKS_ENABLED' hint.
+    @pytest.mark.parametrize("hooks_payload,expected_detail", [
+        (LEGACY_HOOKS, "removed in 0.9.0"),                           # code-only
+        ({**DECLARATIVE_HOOKS, **LEGACY_HOOKS}, "removed in 0.9.0"),  # mixed
+        (DECLARATIVE_HOOKS, "Set CRAWL4AI_HOOKS_ENABLED=true"),       # declarative-only
+    ])
+    def test_any_hooks_payload_403_when_disabled(
+        self, server_module, monkeypatch, stock_client, hooks_payload, expected_detail
+    ):
         monkeypatch.setattr(server_module, "HOOKS_ENABLED", False)
         r = stock_client.post(
             "/crawl",
@@ -125,6 +135,7 @@ class TestLegacyHookCode:
             headers=_bearer(),
         )
         assert r.status_code == 403
+        assert expected_detail in r.json()["detail"]
 
     def _stub_crawl(self, server_module, monkeypatch, results):
         async def fake_handle_crawl_request(**kwargs):

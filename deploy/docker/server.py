@@ -672,6 +672,21 @@ _HOOKS_CODE_WARNING = (
 )
 
 
+def _reject_disabled_hooks(hooks) -> None:
+    """403 for any hooks payload while hooks are disabled. Legacy inline code
+    gets its own detail: enabling CRAWL4AI_HOOKS_ENABLED would not run it (the
+    feature was removed in 0.9.0), so the generic remedy would mislead."""
+    if hooks.code:
+        raise HTTPException(
+            403,
+            "Inline hook code (hooks.code) was removed in 0.9.0 and cannot be "
+            "enabled; it was not executed. Use declarative hook actions instead "
+            "(GET /hooks/info), which are additionally disabled on this server "
+            "(CRAWL4AI_HOOKS_ENABLED).",
+        )
+    raise HTTPException(403, "Hooks are disabled. Set CRAWL4AI_HOOKS_ENABLED=true to enable.")
+
+
 @app.post("/screenshot")
 @limiter.limit(config["rate_limiting"]["default_limit"])
 @mcp_tool("screenshot")
@@ -900,7 +915,7 @@ async def crawl(
     if not crawl_request.urls:
         raise HTTPException(400, "At least one URL required")
     if crawl_request.hooks and not HOOKS_ENABLED:
-        raise HTTPException(403, "Hooks are disabled. Set CRAWL4AI_HOOKS_ENABLED=true to enable.")
+        _reject_disabled_hooks(crawl_request.hooks)
     # Check whether it is a redirection for a streaming request
     try:
         crawler_config = CrawlerRunConfig.load(
@@ -945,7 +960,7 @@ async def crawl_stream(
     if not crawl_request.urls:
         raise HTTPException(400, "At least one URL required")
     if crawl_request.hooks and not HOOKS_ENABLED:
-        raise HTTPException(403, "Hooks are disabled. Set CRAWL4AI_HOOKS_ENABLED=true to enable.")
+        _reject_disabled_hooks(crawl_request.hooks)
 
     return await stream_process(crawl_request=crawl_request)
 
