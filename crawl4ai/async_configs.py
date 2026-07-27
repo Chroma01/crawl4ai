@@ -296,6 +296,8 @@ UNTRUSTED_FIELD_ALLOWLIST = {
 _MAX_TIMEOUT_MS = 60_000
 _MAX_SCROLL_STEPS = 1000
 _MAX_VIEWPORT = 4000
+_MAX_PDF_BYTES = 100 * 1024 * 1024
+_MAX_PDF_PAGES = 2000
 
 
 def _filter_untrusted_fields(type_name: str, params: dict) -> dict:
@@ -332,6 +334,17 @@ def _clamp_untrusted(type_name: str, params: dict) -> dict:
         for f in ("viewport_width", "viewport_height"):
             if isinstance(params.get(f), int):
                 params[f] = max(1, min(params[f], _MAX_VIEWPORT))
+    elif type_name == "PDFContentScrapingStrategy":
+        # This class has no field allowlist, so without clamping a body could
+        # simply raise its own caps back to unbounded and re-open the DoS.
+        for f, cap in (("max_pdf_bytes", _MAX_PDF_BYTES), ("max_pdf_pages", _MAX_PDF_PAGES)):
+            if f in params:
+                v = params[f]
+                # <=0 or non-int would read as "no limit"; pin to the cap.
+                params[f] = cap if not isinstance(v, int) or v <= 0 else min(v, cap)
+        # Rasterizing every page is the most expensive thing this strategy can
+        # do, and nothing about untrusted crawling needs it.
+        params["extract_images"] = False
     return params
 
 
