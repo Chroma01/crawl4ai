@@ -701,6 +701,9 @@ async def generate_screenshot(
     sandboxed artifact store; the response includes an `artifact_id` and a `url` to fetch it.
     """
     validate_url_scheme(body.url)
+    # model_dump, not attribute access: the field is marked deprecated and
+    # reading the attribute emits DeprecationWarning on every request.
+    legacy_output_path = body.model_dump(include={"output_path"}).get("output_path")
     crawler = None
     try:
         cfg = CrawlerRunConfig(screenshot=True, screenshot_wait_for=body.screenshot_wait_for, wait_for_images=body.wait_for_images)
@@ -711,9 +714,7 @@ async def generate_screenshot(
         screenshot_data = results[0].screenshot
         art = _store_artifact("png", base64.b64decode(screenshot_data))
         response = {"success": True, "screenshot": screenshot_data, **art}
-        # Legacy 0.8.x key, no longer a schema field: peek at the raw body
-        # (already parsed and cached by FastAPI) to warn that it was ignored.
-        if (await request.json()).get("output_path"):
+        if legacy_output_path:
             response["warning"] = _OUTPUT_PATH_WARNING
         return response
     except HTTPException:
@@ -741,6 +742,9 @@ async def generate_pdf(
     sandboxed artifact store; the response includes an `artifact_id` and a `url` to fetch it.
     """
     validate_url_scheme(body.url)
+    # model_dump, not attribute access: the field is marked deprecated and
+    # reading the attribute emits DeprecationWarning on every request.
+    legacy_output_path = body.model_dump(include={"output_path"}).get("output_path")
     crawler = None
     try:
         cfg = CrawlerRunConfig(pdf=True)
@@ -751,9 +755,7 @@ async def generate_pdf(
         pdf_data = results[0].pdf
         art = _store_artifact("pdf", pdf_data)
         response = {"success": True, "pdf": base64.b64encode(pdf_data).decode(), **art}
-        # Legacy 0.8.x key, no longer a schema field: peek at the raw body
-        # (already parsed and cached by FastAPI) to warn that it was ignored.
-        if (await request.json()).get("output_path"):
+        if legacy_output_path:
             response["warning"] = _OUTPUT_PATH_WARNING
         return response
     except HTTPException:
@@ -943,7 +945,7 @@ async def crawl(
         crawler_configs=crawl_request.crawler_configs,
     )
     if crawl_request.hooks and crawl_request.hooks.code:
-        hooks_resp = results.setdefault("hooks", {"attached": []})
+        hooks_resp = results.setdefault("hooks", {"status": "ignored", "attached": []})
         if not crawl_request.hooks.hooks:
             hooks_resp["status"] = "ignored"
         hooks_resp["warning"] = _HOOKS_CODE_WARNING

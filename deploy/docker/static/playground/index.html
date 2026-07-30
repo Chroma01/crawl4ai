@@ -619,7 +619,15 @@
 
         // Build a useful error message from a failed HTTP response
         function httpErrorMessage(response, data) {
-            let msg = (data && (data.detail || data.error)) || `HTTP ${response.status}`;
+            let detail = data && (data.detail || data.error);
+            // FastAPI 422s send detail as an array of error objects; other
+            // non-strings would render as [object Object].
+            if (Array.isArray(detail)) {
+                detail = detail.map(e => e && e.msg ? `${(e.loc || []).join('.')}: ${e.msg}` : JSON.stringify(e)).join('; ');
+            } else if (detail && typeof detail !== 'string') {
+                detail = JSON.stringify(detail);
+            }
+            let msg = detail || `HTTP ${response.status}`;
             if (response.status === 401) {
                 msg += getToken()
                     ? ' — token rejected; check the API token in the token bar (top right)'
@@ -758,7 +766,7 @@
                         method: 'GET',
                         headers: { 'Accept': 'application/json' }
                     });
-                    responseData = await response.json();
+                    responseData = await response.json().catch(() => ({}));
                     const time = Math.round(performance.now() - startTime);
                     if (!response.ok) {
                         updateStatus('error', time);
@@ -821,7 +829,7 @@
                         body: JSON.stringify(payload)
                     });
 
-                    responseData = await response.json();
+                    responseData = await response.json().catch(() => ({}));
                     const time = Math.round(performance.now() - startTime);
 
                     if (!response.ok) {

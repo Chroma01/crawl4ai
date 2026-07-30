@@ -11,20 +11,17 @@ Behavioral tests for 0.9.x legacy-compatibility handling:
                       never executed, and reported as status "ignored" with a
                       warning when hooks are enabled; any hooks payload is
                       still refused (403) while hooks are disabled.
-  * compose file    - the PID cap lives under deploy.resources.limits (not
-                      pids_limit), which Compose v5 rejects alongside a
-                      limits block.
+
+(The compose PID-cap check lives in test_security_container_posture.py.)
 
 These exercise the running app via TestClient (no browser / Redis needed);
 crawl internals are stubbed where a handler would otherwise need a browser.
 """
 
 import base64
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import yaml
 
 from auth import create_access_token  # noqa: E402
 
@@ -46,7 +43,11 @@ class TestRootRedirect:
         assert r.headers["location"] == "/playground"
 
     def test_monitor_and_data_routes_stay_gated(self, stock_client):
-        assert stock_client.get("/monitor").status_code == 401
+        # /monitor must not serve content without a token; a future
+        # /monitor -> /dashboard redirect is fine (the target is UI-public),
+        # so accept 401 or a redirect, never 200.
+        r = stock_client.get("/monitor", follow_redirects=False)
+        assert r.status_code in (401, 302, 307, 308)
         assert stock_client.get("/monitor/health").status_code == 401
         assert stock_client.post("/crawl", json={"urls": ["https://x"]}).status_code == 401
 
@@ -100,6 +101,19 @@ class TestOutputPathWarning:
         assert r.status_code == 200
         assert "warning" not in r.json()
 
+    @pytest.mark.parametrize("endpoint", ["/screenshot", "/pdf"])
+    def test_output_path_is_never_written(self, stock_client, stub_crawler, endpoint, tmp_path):
+        """Security tripwire for the 0.8.x arbitrary-write vuln: the handler
+        runs for real here (only crawler/artifact store are stubbed), so any
+        reintroduced write of body.output_path creates this file and fails."""
+        target = tmp_path / "out.bin"
+        r = stock_client.post(
+            endpoint, json={"url": "https://example.com", "output_path": str(target)},
+            headers=_bearer(),
+        )
+        assert r.status_code == 200
+        assert not target.exists(), "output_path must never be written to disk"
+
 
 # ───────────────────────── legacy hooks.code ─────────────────────────
 
@@ -115,6 +129,19 @@ class TestLegacyHookCode:
         req = CrawlRequestWithHooks(urls=["https://x"], hooks=LEGACY_HOOKS)
         assert req.hooks.code == LEGACY_HOOKS["code"]
         assert req.hooks.hooks == []
+
+    @pytest.mark.parametrize("code", [
+        "def hook(): ...",                       # bare string
+        {"before_goto": {"nested": "dict"}},     # non-string values
+        ["a", "list"],                           # wrong container entirely
+    ])
+    def test_hook_code_accepts_any_legacy_shape(self, code):
+        """The 0.8.x wire shape was never pinned; a 422 on a field we only
+        report about would be worse than the silent drop it replaces."""
+        from schemas import CrawlRequestWithHooks
+
+        req = CrawlRequestWithHooks(urls=["https://x"], hooks={"code": code})
+        assert req.hooks.code == code
 
     # Any hooks payload is refused while hooks are disabled, but the detail
     # must not mislead legacy callers: enabling the flag would not run
@@ -191,27 +218,5 @@ class TestLegacyHookCode:
         assert "hooks" not in r.json()
 
 
-# ───────────────────────── compose file ─────────────────────────
-
-
-class TestComposeFile:
-    def test_pid_cap_lives_under_deploy_limits(self):
-        """Compose v5 rejects pids_limit next to deploy.resources.limits
-        ("can't set distinct values"); the cap must be expressed once, under
-        deploy.resources.limits.pids."""
-        import os
-
-        override = os.environ.get("CRAWL4AI_COMPOSE_FILE")
-        if override:
-            compose_path = Path(override)
-        else:
-            here = Path(__file__).resolve()
-            if len(here.parents) < 4:
-                pytest.skip("not running from a repo checkout")
-            compose_path = here.parents[3] / "docker-compose.yml"
-        if not compose_path.exists():
-            pytest.skip(f"docker-compose.yml not found at {compose_path}")
-        doc = yaml.safe_load(compose_path.read_text())
-        base = doc["x-base-config"]
-        assert "pids_limit" not in base
-        assert base["deploy"]["resources"]["limits"]["pids"] == 512
+# The compose PID-cap check lives in
+# test_security_container_posture.py::test_pids_limit (YAML-parsed).
