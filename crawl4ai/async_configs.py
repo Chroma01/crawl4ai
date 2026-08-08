@@ -244,6 +244,7 @@ UNTRUSTED_FIELD_ALLOWLIST = {
         "fetch_ssl_certificate",
         # timing / waiting
         "wait_until", "page_timeout", "wait_for", "wait_for_timeout",
+        "body_visibility_timeout",
         "wait_for_images", "delay_before_return_html", "mean_delay", "max_range",
         # scrolling / rendering
         "ignore_body_visibility", "scan_full_page", "scroll_delay",
@@ -1463,6 +1464,8 @@ class CrawlerRunConfig():
                         Default: False.
         ignore_body_visibility (bool): If True, ignore whether the body is visible before proceeding.
                                        Default: True.
+        body_visibility_timeout (int): Maximum time in ms to wait for the body to become visible.
+                                       Default: 30000.
         scan_full_page (bool): If True, scroll through the entire page to load all content.
                                Default: False.
         scroll_delay (float): Delay in seconds between scroll steps if scan_full_page is True.
@@ -1640,6 +1643,7 @@ class CrawlerRunConfig():
         c4a_script: Union[str, List[str]] = None,
         js_only: bool = False,
         ignore_body_visibility: bool = True,
+        body_visibility_timeout: int = 30000,
         scan_full_page: bool = False,
         scroll_delay: float = 0.2,
         max_scroll_steps: Optional[int] = None,
@@ -1770,6 +1774,7 @@ class CrawlerRunConfig():
         self.c4a_script = c4a_script
         self.js_only = js_only
         self.ignore_body_visibility = ignore_body_visibility
+        self.body_visibility_timeout = body_visibility_timeout
         self.scan_full_page = scan_full_page
         self.scroll_delay = scroll_delay
         self.max_scroll_steps = max_scroll_steps
@@ -2137,6 +2142,7 @@ class CrawlerRunConfig():
             "js_code_before_wait": self.js_code_before_wait,
             "js_only": self.js_only,
             "ignore_body_visibility": self.ignore_body_visibility,
+            "body_visibility_timeout": self.body_visibility_timeout,
             "scan_full_page": self.scan_full_page,
             "scroll_delay": self.scroll_delay,
             "max_scroll_steps": self.max_scroll_steps,

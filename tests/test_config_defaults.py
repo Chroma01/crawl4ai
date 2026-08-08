@@ -226,13 +226,17 @@ class TestDumpLoad:
         assert loaded.headless is False
 
     def test_crawler_run_config_dump_load(self):
-        CrawlerRunConfig.set_defaults(verbose=False, scan_full_page=True)
+        assert CrawlerRunConfig().body_visibility_timeout == 30000
+        CrawlerRunConfig.set_defaults(
+            verbose=False, scan_full_page=True, body_visibility_timeout=2000
+        )
         cfg = CrawlerRunConfig()
         data = cfg.dump()
         CrawlerRunConfig.reset_defaults()
         loaded = CrawlerRunConfig.load(data)
         assert loaded.verbose is False
         assert loaded.scan_full_page is True
+        assert loaded.body_visibility_timeout == 2000
 
     def test_to_dict_includes_user_default_values(self):
         BrowserConfig.set_defaults(headless=False)
