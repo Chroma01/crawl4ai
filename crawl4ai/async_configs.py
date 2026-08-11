@@ -300,7 +300,7 @@ def _clamp_untrusted(type_name: str, params: dict) -> dict:
         return min(int(v), _MAX_TIMEOUT_MS)
 
     if type_name == "CrawlerRunConfig":
-        for f in ("page_timeout", "wait_for_timeout"):
+        for f in ("page_timeout", "wait_for_timeout", "body_visibility_timeout"):
             if f in params:
                 params[f] = _cap_timeout(params[f])
         if isinstance(params.get("max_scroll_steps"), int):
@@ -1774,6 +1774,12 @@ class CrawlerRunConfig():
         self.c4a_script = c4a_script
         self.js_only = js_only
         self.ignore_body_visibility = ignore_body_visibility
+        if (
+            not isinstance(body_visibility_timeout, (int, float))
+            or isinstance(body_visibility_timeout, bool)
+            or body_visibility_timeout <= 0
+        ):
+            raise ValueError("body_visibility_timeout must be a positive number")
         self.body_visibility_timeout = body_visibility_timeout
         self.scan_full_page = scan_full_page
         self.scroll_delay = scroll_delay
