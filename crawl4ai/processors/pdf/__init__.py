@@ -8,6 +8,15 @@ from crawl4ai.content_scraping_strategy import ContentScrapingStrategy
 from .processor import NaivePDFProcessorStrategy  # Assuming your current PDF code is in pdf_processor.py
 
 class PDFCrawlerStrategy(AsyncCrawlerStrategy):
+    """Crawler strategy for PDF documents.
+
+    This strategy does not fetch or parse anything itself — it returns a
+    placeholder response (``placeholder_html=True``). It MUST be paired with
+    ``PDFContentScrapingStrategy`` (via ``CrawlerRunConfig.scraping_strategy``),
+    which performs the actual PDF download and content extraction. With any
+    other scraping strategy the result will contain only the placeholder text.
+    """
+
     def __init__(self, logger: AsyncLogger = None):
         self.logger = logger
         
@@ -16,7 +25,8 @@ class PDFCrawlerStrategy(AsyncCrawlerStrategy):
         return AsyncCrawlResponse(
             html="Scraper will handle the real work",  # Scraper will handle the real work
             response_headers={"Content-Type": "application/pdf"},
-            status_code=200
+            status_code=200,
+            placeholder_html=True, # HTML is a placeholder for the actual content, which will be produced by the PDFContentScrapingStrategy
         )
     
     async def close(self):
