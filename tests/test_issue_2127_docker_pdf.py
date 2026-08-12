@@ -1,31 +1,71 @@
-import ast
+import importlib
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from packaging.requirements import InvalidRequirement, Requirement
+
+from crawl4ai.processors.pdf import PDFContentScrapingStrategy
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_default_docker_dependencies_include_pypdf():
-    requirements = (
-        (ROOT / "deploy" / "docker" / "requirements.txt").read_text().splitlines()
-    )
+    lines = (ROOT / "deploy" / "docker" / "requirements.txt").read_text().splitlines()
+    names = set()
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        try:
+            names.add(Requirement(line).name)
+        except InvalidRequirement:
+            continue
 
-    assert "pypdf" in requirements
+    assert "pypdf" in names
 
 
-def test_stream_handler_preserves_requested_scraping_strategy():
-    tree = ast.parse((ROOT / "deploy" / "docker" / "api.py").read_text())
-    handler = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.AsyncFunctionDef)
-        and node.name == "handle_stream_crawl_request"
-    )
-    assigned_attributes = {
-        target.attr
-        for node in ast.walk(handler)
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Attribute)
+@pytest.mark.asyncio
+async def test_stream_handler_preserves_requested_scraping_strategy(monkeypatch):
+    docker_dir = ROOT / "deploy" / "docker"
+    monkeypatch.syspath_prepend(str(docker_dir))
+
+    api = importlib.import_module("api")
+    crawler_pool = importlib.import_module("crawler_pool")
+    egress_broker = importlib.import_module("egress_broker")
+    governor = importlib.import_module("governor")
+
+    crawler = MagicMock()
+    crawler.arun_many = AsyncMock(return_value=MagicMock())
+    monkeypatch.setattr(api, "_normalize_and_validate_seeds", lambda urls: urls)
+    monkeypatch.setattr(egress_broker, "enforce_egress", lambda _: None)
+    monkeypatch.setattr(governor, "clamp_deep_crawl", lambda _: None)
+    monkeypatch.setattr(crawler_pool, "get_crawler", AsyncMock(return_value=crawler))
+
+    crawler_config = {
+        "type": "CrawlerRunConfig",
+        "params": {
+            "cache_mode": "bypass",
+            "stream": False,
+            "scraping_strategy": {
+                "type": "PDFContentScrapingStrategy",
+                "params": {"extract_images": False, "batch_size": 8},
+            },
+        },
+    }
+    config = {
+        "crawler": {
+            "memory_threshold_percent": 90,
+            "rate_limiter": {"base_delay": [0.1, 0.3]},
+        }
     }
 
-    assert "scraping_strategy" not in assigned_attributes
+    await api.handle_stream_crawl_request(
+        urls=["https://example.com/document.pdf"],
+        browser_config={"type": "BrowserConfig", "params": {}},
+        crawler_config=crawler_config,
+        config=config,
+    )
+
+    effective_config = crawler.arun_many.await_args.kwargs["config"]
+    assert isinstance(effective_config.scraping_strategy, PDFContentScrapingStrategy)
