@@ -92,6 +92,15 @@ import psutil, time
 
 logger = logging.getLogger(__name__)
 
+
+def _raise_for_crawl_failure(result):
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=result.error_message,
+        )
+
+
 # --- Helper to get memory ---
 def _get_memory_mb():
     try:
@@ -147,11 +156,7 @@ async def handle_llm_qa(
         enforce_egress(browser_cfg)
         crawler = await get_crawler(browser_cfg)
         result = await crawler.arun(url)
-        if not result.success:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.error_message
-            )
+        _raise_for_crawl_failure(result)
         content = result.markdown.fit_markdown or result.markdown.raw_markdown
 
         # Create prompt and get LLM response
@@ -179,6 +184,8 @@ async def handle_llm_qa(
         )
 
         return response.choices[0].message.content
+    except HTTPException:
+        raise
     except LLMProviderNotAllowed as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -389,11 +396,7 @@ async def handle_markdown_request(
             )
         )
 
-        if not result.success:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.error_message
-            )
+        _raise_for_crawl_failure(result)
 
         return (result.markdown.raw_markdown
                if filter_type == FilterType.RAW
