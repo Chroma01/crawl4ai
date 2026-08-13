@@ -289,6 +289,26 @@ async def test_remove_overlay_elements(local_server):
         assert len(result.html) > 0, "HTML should still be present after overlay removal"
 
 
+@pytest.mark.asyncio
+@pytest.mark.network
+async def test_overlay_removal_on_csp_sandbox_page():
+    """raw.githubusercontent.com serves CSP `sandbox`, which disables page
+    timers; overlay/consent removal must not stall waiting on in-page
+    setTimeout (used to hang ~30s per page). URL is commit-pinned so the
+    response never changes."""
+    url = "https://raw.githubusercontent.com/unclecode/crawl4ai/055e2ecdc702228a80363e2c51ca79e473222072/README.md"
+    config = CrawlerRunConfig(
+        remove_overlay_elements=True, remove_consent_popups=True, verbose=False
+    )
+    async with AsyncWebCrawler(config=BrowserConfig(headless=True, verbose=False)) as crawler:
+        start = time.perf_counter()
+        result = await crawler.arun(url=url, config=config)
+        elapsed = time.perf_counter() - start
+        assert result.success, f"Crawl failed on CSP-sandboxed page: {result.error_message}"
+        assert "Crawl4AI" in result.html, "Page content should be captured"
+        assert elapsed < 20, f"Overlay removal stalled on CSP-sandboxed page ({elapsed:.1f}s)"
+
+
 # ---------------------------------------------------------------------------
 # Stealth mode
 # ---------------------------------------------------------------------------
