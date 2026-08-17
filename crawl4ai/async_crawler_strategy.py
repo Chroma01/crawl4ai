@@ -823,7 +823,7 @@ class AsyncPlaywrightCrawlerStrategy(AsyncCrawlerStrategy):
                                         style.opacity !== '0';
                         return isVisible;
                     }""",
-                    timeout=30000,
+                    timeout=config.body_visibility_timeout,
                 )
 
                 if not is_visible and not config.ignore_body_visibility:
