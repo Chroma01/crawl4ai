@@ -826,6 +826,21 @@ class AsyncPlaywrightCrawlerStrategy(AsyncCrawlerStrategy):
                     timeout=config.body_visibility_timeout,
                 )
 
+                if not is_visible and config.ignore_body_visibility:
+                    # The wait timed out and its result is about to be discarded,
+                    # so the crawl still succeeds — just body_visibility_timeout ms
+                    # slower. Say so, otherwise the delay is invisible (see #2144).
+                    self.logger.warning(
+                        message=(
+                            "Body never became visible after {timeout}ms — the page may "
+                            "use ng-cloak/v-cloak. This delay is added to every crawl of "
+                            "this page; lower CrawlerRunConfig.body_visibility_timeout "
+                            "to shorten it."
+                        ),
+                        tag="WARNING",
+                        params={"timeout": config.body_visibility_timeout},
+                    )
+
                 if not is_visible and not config.ignore_body_visibility:
                     visibility_info = await self.check_visibility(page)
                     raise Error(f"Body element is hidden: {visibility_info}")
