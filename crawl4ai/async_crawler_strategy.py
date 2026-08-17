@@ -1534,7 +1534,7 @@ class AsyncPlaywrightCrawlerStrategy(AsyncCrawlerStrategy):
                 }})()
             """
             )
-            await page.wait_for_timeout(500)  # Wait for any animations to complete
+            await page.wait_for_timeout(600)  # Wait for any animations to complete
         except Exception as e:
             self.logger.warning(
                 message="Failed to remove overlay elements: {error}",
