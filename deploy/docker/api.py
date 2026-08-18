@@ -85,6 +85,7 @@ from utils import (
     get_llm_base_url,
     get_redis_task_ttl,
     validate_url_destination,
+    datetime_handler,
 )
 from webhook import WebhookDeliveryService
 
@@ -607,6 +608,7 @@ async def stream_results(crawler: AsyncWebCrawler, results_gen: AsyncGenerator) 
     import json
     from utils import datetime_handler
     from crawler_pool import release_crawler
+    from crawl4ai.processors.pdf import PDFCrawlerStrategy
 
     try:
         async for result in results_gen:
@@ -634,7 +636,10 @@ async def stream_results(crawler: AsyncWebCrawler, results_gen: AsyncGenerator) 
         logger.warning("Client disconnected during streaming")
     finally:
         if crawler:
-            await release_crawler(crawler)
+            if isinstance(crawler.crawler_strategy, PDFCrawlerStrategy):
+                await crawler.close()  # not pooled; release_crawler would be a no-op
+            else:
+                await release_crawler(crawler)
 
 
 def _normalize_and_validate_seeds(urls: List[str]) -> List[str]:
@@ -659,6 +664,7 @@ async def handle_crawl_request(
     # Track request start
     request_id = f"req_{uuid4().hex[:8]}"
     crawler = None
+    is_pdf_crawl = False
     try:
         from monitor import get_monitor
         await get_monitor().track_request_start(
@@ -689,7 +695,17 @@ async def handle_crawl_request(
         )
         
         from crawler_pool import get_crawler, release_crawler
-        crawler = await get_crawler(browser_config)
+        from crawl4ai.processors.pdf import PDFContentScrapingStrategy, PDFCrawlerStrategy
+        is_pdf_crawl = isinstance(crawler_config.scraping_strategy, PDFContentScrapingStrategy)
+        if is_pdf_crawl:
+            if hooks_config:
+                # PDFCrawlerStrategy has no browser page, so hooks can't attach to it
+                raise HTTPException(status_code=400, detail="Hooks are not supported with PDFContentScrapingStrategy")
+            # Use PDFCrawlerStrategy when scraping PDFs, as headless Chromium can't render PDFs inline
+            crawler = AsyncWebCrawler(crawler_strategy=PDFCrawlerStrategy())
+            await crawler.start()
+        else:
+            crawler = await get_crawler(browser_config)
         
         # Attach declarative hooks if provided
         hooks_status = {}
@@ -771,6 +787,10 @@ async def handle_crawl_request(
                 if result_dict.get('pdf') is not None and isinstance(result_dict.get('pdf'), bytes):
                     result_dict['pdf'] = b64encode(result_dict['pdf']).decode('utf-8')
                     
+                if is_pdf_crawl:
+                    # PDF metadata contains datetimes that JSONResponse can't serialize
+                    result_dict = json.loads(json.dumps(result_dict, default=datetime_handler))
+
                 processed_results.append(result_dict)
             except Exception as e:
                 logger.error(f"Error processing result: {e}")
@@ -851,7 +871,10 @@ async def handle_crawl_request(
         )
     finally:
         if crawler:
-            await release_crawler(crawler)
+            if is_pdf_crawl:
+                await crawler.close()  # not pooled; release_crawler would be a no-op
+            else:
+                await release_crawler(crawler)
 
 async def handle_stream_crawl_request(
     urls: List[str],
@@ -895,7 +918,16 @@ async def handle_stream_crawl_request(
             )
 
         from crawler_pool import get_crawler, release_crawler
-        crawler = await get_crawler(browser_config)
+        from crawl4ai.processors.pdf import PDFContentScrapingStrategy, PDFCrawlerStrategy
+        if isinstance(crawler_config.scraping_strategy, PDFContentScrapingStrategy):
+            if hooks_config:
+                # PDFCrawlerStrategy has no browser page, so hooks can't attach to it
+                raise HTTPException(status_code=400, detail="Hooks are not supported with PDFContentScrapingStrategy")
+            # Use PDFCrawlerStrategy when scraping PDFs, as headless Chromium can't render PDFs inline
+            crawler = AsyncWebCrawler(crawler_strategy=PDFCrawlerStrategy())
+            await crawler.start()
+        else:
+            crawler = await get_crawler(browser_config)
 
         # Attach declarative hooks if provided
         if hooks_config:
