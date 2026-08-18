@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from crawl4ai.processors.pdf import PDFCrawlerStrategy
+from crawl4ai.processors.pdf import PDFContentScrapingStrategy, PDFCrawlerStrategy
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -86,6 +86,10 @@ async def test_pdf_scraping_strategy_gets_pdf_crawler(api, pool_mock, monkeypatc
     pool_mock.assert_not_awaited()
     # The dedicated PDF crawler is not pooled, so the handler must close it.
     used["crawler"].close.assert_awaited_once()
+    # SSRF protection: the handler must wire the server's URL validator into
+    # the scraping strategy so every download/redirect hop is vetted.
+    effective_config = used["crawler"].arun.await_args.kwargs["config"]
+    assert effective_config.scraping_strategy.url_validator is api.validate_url_destination
 
 
 @pytest.mark.asyncio
@@ -121,3 +125,82 @@ async def test_default_strategy_still_uses_pool(api, pool_mock):
 
     assert response["success"] is True
     pool_mock.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# PDF download redirect handling (url_validator SSRF guard)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def redirect_server():
+    """Real HTTP server: /hop redirects to /doc.pdf, which serves a tiny PDF."""
+    import http.server
+    import socket
+    import threading
+
+    pdf_bytes = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+                 b"2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n"
+                 b"xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n"
+                 b"0000000058 00000 n \ntrailer\n<< /Size 3 /Root 1 0 R >>\n"
+                 b"startxref\n110\n%%EOF\n")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/hop":
+                self.send_response(302)
+                self.send_header("Location", "/doc.pdf")
+                self.end_headers()
+            elif self.path == "/loop":
+                self.send_response(302)
+                self.send_header("Location", "/loop")
+                self.end_headers()
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/pdf")
+                self.end_headers()
+                self.wfile.write(pdf_bytes)
+
+        def log_message(self, *args):
+            pass
+
+    with socket.socket() as s:
+        s.bind(("localhost", 0))
+        port = s.getsockname()[1]
+    httpd = http.server.ThreadingHTTPServer(("localhost", port), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://localhost:{port}"
+    httpd.shutdown()
+
+
+def test_download_validator_vets_every_redirect_hop(redirect_server):
+    """The validator must see BOTH the original URL and the redirect target,
+    and a raising validator must abort the download before the hop is fetched."""
+    seen = []
+
+    def validator(u):
+        seen.append(u)
+        if u.endswith("/doc.pdf"):
+            raise ValueError("blocked hop")
+
+    strategy = PDFContentScrapingStrategy(url_validator=validator)
+    with pytest.raises(RuntimeError, match="Failed to download"):
+        strategy._get_pdf_path(f"{redirect_server}/hop")
+
+    assert seen == [f"{redirect_server}/hop", f"{redirect_server}/doc.pdf"]
+
+
+def test_download_redirects_still_followed_without_validator(redirect_server):
+    """Back-compat: with no validator, redirects are followed as before."""
+    strategy = PDFContentScrapingStrategy()
+    path = strategy._get_pdf_path(f"{redirect_server}/hop")
+    try:
+        assert Path(path).read_bytes().startswith(b"%PDF")
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_download_redirect_loop_aborts(redirect_server):
+    """An endless redirect chain must abort after the cap, not hang."""
+    strategy = PDFContentScrapingStrategy()
+    with pytest.raises(RuntimeError, match="[Tt]oo many redirects"):
+        strategy._get_pdf_path(f"{redirect_server}/loop")

@@ -701,6 +701,8 @@ async def handle_crawl_request(
             if hooks_config:
                 # PDFCrawlerStrategy has no browser page, so hooks can't attach to it
                 raise HTTPException(status_code=400, detail="Hooks are not supported with PDFContentScrapingStrategy")
+            # SSRF protection: vet the PDF download URL and every redirect hop
+            crawler_config.scraping_strategy.url_validator = validate_url_destination
             # Use PDFCrawlerStrategy when scraping PDFs, as headless Chromium can't render PDFs inline
             crawler = AsyncWebCrawler(crawler_strategy=PDFCrawlerStrategy())
             await crawler.start()
@@ -923,6 +925,8 @@ async def handle_stream_crawl_request(
             if hooks_config:
                 # PDFCrawlerStrategy has no browser page, so hooks can't attach to it
                 raise HTTPException(status_code=400, detail="Hooks are not supported with PDFContentScrapingStrategy")
+            # SSRF protection: vet the PDF download URL and every redirect hop
+            crawler_config.scraping_strategy.url_validator = validate_url_destination
             # Use PDFCrawlerStrategy when scraping PDFs, as headless Chromium can't render PDFs inline
             crawler = AsyncWebCrawler(crawler_strategy=PDFCrawlerStrategy())
             await crawler.start()
