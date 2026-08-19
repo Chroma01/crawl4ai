@@ -603,12 +603,19 @@ def create_task_response(task: dict, task_id: str, base_url: str) -> dict:
 
     return response
 
+async def _dispose_crawler(crawler):
+    """Close a dedicated PDF crawler (not pooled) or release a pooled one."""
+    from crawl4ai.processors.pdf import PDFCrawlerStrategy
+    from crawler_pool import release_crawler
+    if isinstance(crawler.crawler_strategy, PDFCrawlerStrategy):
+        await crawler.close()
+    else:
+        await release_crawler(crawler)
+
 async def stream_results(crawler: AsyncWebCrawler, results_gen: AsyncGenerator) -> AsyncGenerator[bytes, None]:
     """Stream results with heartbeats and completion markers."""
     import json
     from utils import datetime_handler
-    from crawler_pool import release_crawler
-    from crawl4ai.processors.pdf import PDFCrawlerStrategy
 
     try:
         async for result in results_gen:
@@ -636,10 +643,7 @@ async def stream_results(crawler: AsyncWebCrawler, results_gen: AsyncGenerator) 
         logger.warning("Client disconnected during streaming")
     finally:
         if crawler:
-            if isinstance(crawler.crawler_strategy, PDFCrawlerStrategy):
-                await crawler.close()  # not pooled; release_crawler would be a no-op
-            else:
-                await release_crawler(crawler)
+            await _dispose_crawler(crawler)
 
 
 def _normalize_and_validate_seeds(urls: List[str]) -> List[str]:
@@ -727,6 +731,9 @@ async def handle_crawl_request(
                         current_value = getattr(cfg, key)
                         if current_value is None or current_value == "":
                             setattr(cfg, key, value)
+                # SSRF: per-URL PDF strategies need the validator wired too
+                if isinstance(cfg.scraping_strategy, PDFContentScrapingStrategy):
+                    cfg.scraping_strategy.url_validator = validate_url_destination
             effective_config = config_list
         else:
             # Single config (original behavior)
@@ -919,7 +926,7 @@ async def handle_stream_crawl_request(
                 ),
             )
 
-        from crawler_pool import get_crawler, release_crawler
+        from crawler_pool import get_crawler
         from crawl4ai.processors.pdf import PDFContentScrapingStrategy, PDFCrawlerStrategy
         if isinstance(crawler_config.scraping_strategy, PDFContentScrapingStrategy):
             if hooks_config:
@@ -964,21 +971,21 @@ async def handle_stream_crawl_request(
 
     except (UntrustedConfigError, HookValidationError) as e:
         if crawler:
-            await release_crawler(crawler)
+            await _dispose_crawler(crawler)
         raise HTTPException(status_code=400, detail=f"Rejected request: {e}")
 
     except HTTPException:
         # Deliberate status (e.g. 400 SSRF "URL blocked") must pass through
         # rather than be genericized to 500 by the handler below.
         if crawler:
-            await release_crawler(crawler)
+            await _dispose_crawler(crawler)
         raise
 
     except Exception as e:
-        # Release crawler on setup error (for successful streams,
-        # release happens in stream_results finally block)
+        # Dispose crawler on setup error (for successful streams,
+        # disposal happens in stream_results finally block)
         if crawler:
-            await release_crawler(crawler)
+            await _dispose_crawler(crawler)
         logger.error(f"Stream crawl error: {str(e)}", exc_info=True)
         # Raising HTTPException here will prevent streaming response
         raise HTTPException(
