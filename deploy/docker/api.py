@@ -868,15 +868,20 @@ async def handle_stream_crawl_request(
         # mirroring handle_crawl_request. The streaming path previously skipped
         # this, leaving /crawl/stream (and /crawl with stream=true) unguarded.
         urls = _normalize_and_validate_seeds(urls)
-        browser_config = BrowserConfig.load(browser_config, provenance=Provenance.UNTRUSTED)
+        browser_config = BrowserConfig.load(
+            browser_config, provenance=Provenance.UNTRUSTED
+        )
         # browser_config.verbose = True # Set to False or remove for production stress testing
         browser_config.verbose = False
         from egress_broker import enforce_egress
+
         enforce_egress(browser_config)
-        crawler_config = CrawlerRunConfig.load(crawler_config, provenance=Provenance.UNTRUSTED)
+        crawler_config = CrawlerRunConfig.load(
+            crawler_config, provenance=Provenance.UNTRUSTED
+        )
         from governor import clamp_deep_crawl
+
         clamp_deep_crawl(crawler_config)
-        crawler_config.scraping_strategy = LXMLWebScrapingStrategy()
         crawler_config.stream = True
 
         # Deep crawl streaming supports exactly one start URL
@@ -944,7 +949,7 @@ async def handle_stream_crawl_request(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
-        
+
 async def handle_crawl_job(
     redis,
     background_tasks: BackgroundTasks,
