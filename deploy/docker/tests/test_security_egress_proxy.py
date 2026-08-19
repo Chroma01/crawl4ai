@@ -264,8 +264,16 @@ def test_upstream_proxy_env_parsing(monkeypatch):
     monkeypatch.delenv("HTTP_PROXY")
     monkeypatch.delenv("HTTPS_PROXY")
     assert egress_proxy.upstream_proxy() is None
-    # non-latin-1 credentials must not raise (encoded as UTF-8)
+    # a junk/unsupported candidate falls through to a valid fallback
+    monkeypatch.setenv("HTTP_PROXY", "http://good:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://")
+    assert egress_proxy.upstream_proxy() == ("good", 3128, None)
+    monkeypatch.setenv("HTTPS_PROXY", "https://tls-proxy.corp")  # unsupported scheme
+    assert egress_proxy.upstream_proxy() == ("good", 3128, None)
     monkeypatch.delenv("CRAWL4AI_UPSTREAM_PROXY")
+    monkeypatch.delenv("HTTP_PROXY")
+    assert egress_proxy.upstream_proxy() is None  # https:// alone -> refused, not mis-dialed
+    # non-latin-1 credentials must not raise (encoded as UTF-8)
     monkeypatch.setenv("HTTPS_PROXY", "http://u:%E5%AF%86%E7%A0%81@10.0.0.1:8080")
     assert egress_proxy.upstream_proxy()[2] is not None
     # NO_PROXY routing: suffix and CIDR entries force a direct dial
@@ -274,6 +282,8 @@ def test_upstream_proxy_env_parsing(monkeypatch):
     monkeypatch.setenv("NO_PROXY", ".corp.example")
     assert egress_proxy._use_upstream(pin) is None
     monkeypatch.setenv("NO_PROXY", "203.0.113.0/24")
+    assert egress_proxy._use_upstream(pin) is None
+    monkeypatch.setenv("NO_PROXY", "site.corp.example:443")  # host:port form
     assert egress_proxy._use_upstream(pin) is None
 
 

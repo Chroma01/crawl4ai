@@ -39,35 +39,39 @@ _BAD = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request"
 _MAX_HEADER_BYTES = 64 * 1024
 
 
-def _env(*names: str) -> str:
-    return next((os.environ[n] for n in names if os.environ.get(n)), "")
-
-
 def upstream_proxy(scheme: str = "https"):
     """(host, port, auth_header_bytes|None) of the upstream proxy, or None.
 
     Read per-call (not at import) so operators and tests see env changes.
-    The target scheme picks HTTP(S)_PROXY per convention, falling back to
-    the other pair when only one is set.
+    The target scheme picks HTTP(S)_PROXY per convention; the first
+    candidate that parses wins, so junk values fall through to a fallback.
     """
     order = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy") if scheme == "http" \
         else ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
-    raw = _env("CRAWL4AI_UPSTREAM_PROXY", *order).strip()
-    if not raw:
-        return None
-    sp = urlsplit(raw if "://" in raw else "http://" + raw)
-    if not sp.hostname:
-        return None
-    auth = None
-    if sp.username:
-        cred = f"{unquote(sp.username)}:{unquote(sp.password or '')}".encode("utf-8")
-        auth = b"Proxy-Authorization: Basic " + base64.b64encode(cred) + b"\r\n"
-    return sp.hostname, sp.port or 80, auth
+    for name in ("CRAWL4AI_UPSTREAM_PROXY", *order):
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            continue
+        sp = urlsplit(raw if "://" in raw else "http://" + raw)
+        if not sp.hostname:
+            logger.warning("ignoring %s: unparseable proxy URL", name)
+            continue
+        if sp.scheme != "http":
+            # We only speak plaintext HTTP to the upstream (no TLS/socks dial).
+            logger.warning("ignoring %s: unsupported proxy scheme %r", name, sp.scheme)
+            continue
+        auth = None
+        if sp.username:
+            cred = f"{unquote(sp.username)}:{unquote(sp.password or '')}".encode("utf-8")
+            auth = b"Proxy-Authorization: Basic " + base64.b64encode(cred) + b"\r\n"
+        return sp.hostname, sp.port or 80, auth
+    return None
 
 
 def _no_proxy_match(host: str, ip: str) -> bool:
     """True if NO_PROXY says this target must bypass the upstream proxy."""
-    entries = [e.strip() for e in _env("NO_PROXY", "no_proxy").split(",") if e.strip()]
+    raw = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
     for entry in entries:
         if entry == "*":
             return True
@@ -78,6 +82,9 @@ def _no_proxy_match(host: str, ip: str) -> bool:
         except ValueError:
             pass
         suffix = entry.lower().lstrip(".")
+        head, sep, port_part = suffix.rpartition(":")
+        if sep and port_part.isdigit():
+            suffix = head
         low = host.lower()
         if low == suffix or low.endswith("." + suffix):
             return True
