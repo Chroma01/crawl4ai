@@ -154,6 +154,21 @@ def redirect_server():
                 self.send_response(302)
                 self.send_header("Location", "/loop")
                 self.end_headers()
+            elif self.path == "/gated":
+                # Sets a cookie, then redirects to a target that demands it.
+                self.send_response(302)
+                self.send_header("Set-Cookie", "sess=abc123; Path=/")
+                self.send_header("Location", "/gated-doc.pdf")
+                self.end_headers()
+            elif self.path == "/gated-doc.pdf":
+                if "sess=abc123" not in self.headers.get("Cookie", ""):
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/pdf")
+                self.end_headers()
+                self.wfile.write(pdf_bytes)
             else:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/pdf")
@@ -193,6 +208,23 @@ def test_download_redirects_still_followed_without_validator(redirect_server):
     """Back-compat: with no validator, redirects are followed as before."""
     strategy = PDFContentScrapingStrategy()
     path = strategy._get_pdf_path(f"{redirect_server}/hop")
+    try:
+        assert Path(path).read_bytes().startswith(b"%PDF")
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_download_carries_cookies_across_redirect_hops(redirect_server):
+    """Cookies set by a redirecting host must reach the next hop.
+
+    Following redirects by hand (needed so url_validator can vet each hop)
+    means a bare requests.get() per hop starts with an empty cookie jar, so
+    a host that sets a cookie and then redirects never gets it back. That is
+    the normal shape for gated or CDN-signed PDFs, and allow_redirects=True
+    used to handle it implicitly.
+    """
+    strategy = PDFContentScrapingStrategy()
+    path = strategy._get_pdf_path(f"{redirect_server}/gated")
     try:
         assert Path(path).read_bytes().startswith(b"%PDF")
     finally:
