@@ -123,7 +123,5 @@ async () => {
     document.body.style.paddingRight = "0px";
     document.body.style.overflow = "auto";
 
-    // Wait a bit for any animations to complete
     document.body.scrollIntoView(false);
-    await new Promise((resolve) => setTimeout(resolve, 50));
 };
