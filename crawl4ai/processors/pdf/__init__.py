@@ -7,7 +7,18 @@ from crawl4ai.models import AsyncCrawlResponse, ScrapingResult
 from crawl4ai.content_scraping_strategy import ContentScrapingStrategy
 from .processor import NaivePDFProcessorStrategy  # Assuming your current PDF code is in pdf_processor.py
 
+MAX_PDF_DOWNLOAD_REDIRECTS = 10  # Max redirect hops to follow when downloading a PDF
+
 class PDFCrawlerStrategy(AsyncCrawlerStrategy):
+    """Crawler strategy for PDF documents.
+
+    This strategy does not fetch or parse anything itself — it returns a
+    placeholder response (``placeholder_html=True``). It MUST be paired with
+    ``PDFContentScrapingStrategy`` (via ``CrawlerRunConfig.scraping_strategy``),
+    which performs the actual PDF download and content extraction. With any
+    other scraping strategy the result will contain only the placeholder text.
+    """
+
     def __init__(self, logger: AsyncLogger = None):
         self.logger = logger
         
@@ -16,7 +27,8 @@ class PDFCrawlerStrategy(AsyncCrawlerStrategy):
         return AsyncCrawlResponse(
             html="Scraper will handle the real work",  # Scraper will handle the real work
             response_headers={"Content-Type": "application/pdf"},
-            status_code=200
+            status_code=200,
+            placeholder_html=True, # HTML is a placeholder for the actual content, which will be produced by the PDFContentScrapingStrategy
         )
     
     async def close(self):
@@ -58,8 +70,10 @@ class PDFContentScrapingStrategy(ContentScrapingStrategy):
                  extract_images : bool = False,
                  image_save_dir : str = None,
                  batch_size: int = 4,
-                 logger: AsyncLogger = None):
+                 logger: AsyncLogger = None,
+                 url_validator=None):
         self.logger = logger
+        self.url_validator = url_validator # vets the download URL before fetch
         self.pdf_processor = NaivePDFProcessorStrategy(
             save_images_locally=save_images_locally,
             extract_images=extract_images,
@@ -154,7 +168,31 @@ class PDFContentScrapingStrategy(ContentScrapingStrategy):
                 
                 # Download PDF with streaming and timeout
                 # Connection timeout: 10s, Read timeout: 300s (5 minutes for large PDFs)
-                response = requests.get(url, stream=True, timeout=(20, 60 * 10))
+                # Redirects are followed manually so url_validator (when set) can vet every hop BEFORE it is fetched
+                from urllib.parse import urljoin
+                current_url = url
+                # One Session for the whole chain: a bare requests.get() per hop
+                # starts with an empty cookie jar, so a host that sets a cookie
+                # and then redirects (common for gated/CDN-signed PDFs) would
+                # get its own cookie back. allow_redirects=True used to carry
+                # them for us; following hops by hand means we carry them here.
+                session = requests.Session()
+                for _ in range(MAX_PDF_DOWNLOAD_REDIRECTS):
+                    if self.url_validator:
+                        self.url_validator(current_url)
+                    response = session.get(current_url, stream=True, timeout=(20, 60 * 10),
+                                           allow_redirects=False)
+                    if response.is_redirect:
+                        location = response.headers.get("location")
+                        response.close()  # hop response holds its connection open (stream=True)
+                        if not location:
+                            raise RuntimeError(f"Redirect without Location header from {current_url}")
+                        current_url = urljoin(current_url, location)
+                        continue
+                    break
+                else:
+                    raise RuntimeError(
+                        f"Too many redirects (>{MAX_PDF_DOWNLOAD_REDIRECTS}) downloading PDF from {url}")
                 response.raise_for_status()
                 
                 # Get file size if available

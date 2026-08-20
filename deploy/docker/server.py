@@ -292,6 +292,14 @@ if ASSETS_DIR.exists():
 async def root():
     return RedirectResponse("/playground")
 
+
+# Pre-0.9 docs pointed at /monitor for the dashboard UI, which now lives at
+# /dashboard; /monitor is the monitoring API prefix and has no page of its own.
+# Only this exact path redirects - /monitor/* stays gated (see public_paths).
+@app.get("/monitor", include_in_schema=False)
+async def monitor_ui_redirect():
+    return RedirectResponse("/dashboard")
+
 # ─────────────────── infra / middleware  ─────────────────────
 redis = aioredis.from_url(_build_redis_url(config))
 
@@ -392,7 +400,10 @@ def _current_api_token() -> str:
 app.add_middleware(
     AuthGateMiddleware,
     token_provider=_current_api_token,
-    public_paths={HEALTH_PATH, "/token"},
+    # Exact paths only: "/monitor" reaches the redirect above, while every
+    # "/monitor/*" API route (incl. /monitor/ws and the admin actions) keeps
+    # requiring a credential.
+    public_paths={HEALTH_PATH, "/token", "/", "/monitor"},
     public_prefixes=_UI_PREFIXES,
 )
 
@@ -660,6 +671,32 @@ async def get_artifact(artifact_id: str, _td: Dict = Depends(token_dep)):
 
 # Screenshot endpoint
 
+_OUTPUT_PATH_WARNING = (
+    "output_path was removed in 0.9.0 and is ignored - no file was written. "
+    "The result is stored server-side; fetch it with an authenticated "
+    "GET /artifacts/{artifact_id}."
+)
+
+_HOOKS_CODE_WARNING = (
+    "Inline hook code (hooks.code) was removed in 0.9.0 and was NOT executed. "
+    "Use declarative hook actions instead (GET /hooks/info for the schema)."
+)
+
+
+def _reject_disabled_hooks(hooks) -> None:
+    """403 for any hooks payload while hooks are disabled. Legacy inline code
+    gets its own detail: enabling CRAWL4AI_HOOKS_ENABLED would not run it (the
+    feature was removed in 0.9.0), so the generic remedy would mislead."""
+    if hooks.code:
+        raise HTTPException(
+            403,
+            "Inline hook code (hooks.code) was removed in 0.9.0 and cannot be "
+            "enabled; it was not executed. Use declarative hook actions instead "
+            "(GET /hooks/info), which are additionally disabled on this server "
+            "(CRAWL4AI_HOOKS_ENABLED).",
+        )
+    raise HTTPException(403, "Hooks are disabled. Set CRAWL4AI_HOOKS_ENABLED=true to enable.")
+
 
 @app.post("/screenshot")
 @limiter.limit(config["rate_limiting"]["default_limit"])
@@ -675,6 +712,9 @@ async def generate_screenshot(
     sandboxed artifact store; the response includes an `artifact_id` and a `url` to fetch it.
     """
     validate_url_scheme(body.url)
+    # model_dump, not attribute access: the field is marked deprecated and
+    # reading the attribute emits DeprecationWarning on every request.
+    legacy_output_path = body.model_dump(include={"output_path"}).get("output_path")
     crawler = None
     try:
         cfg = CrawlerRunConfig(screenshot=True, screenshot_wait_for=body.screenshot_wait_for, wait_for_images=body.wait_for_images)
@@ -684,7 +724,10 @@ async def generate_screenshot(
             raise HTTPException(500, detail=results[0].error_message or "Crawl failed")
         screenshot_data = results[0].screenshot
         art = _store_artifact("png", base64.b64decode(screenshot_data))
-        return {"success": True, "screenshot": screenshot_data, **art}
+        response = {"success": True, "screenshot": screenshot_data, **art}
+        if legacy_output_path:
+            response["warning"] = _OUTPUT_PATH_WARNING
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -710,6 +753,9 @@ async def generate_pdf(
     sandboxed artifact store; the response includes an `artifact_id` and a `url` to fetch it.
     """
     validate_url_scheme(body.url)
+    # model_dump, not attribute access: the field is marked deprecated and
+    # reading the attribute emits DeprecationWarning on every request.
+    legacy_output_path = body.model_dump(include={"output_path"}).get("output_path")
     crawler = None
     try:
         cfg = CrawlerRunConfig(pdf=True)
@@ -719,7 +765,10 @@ async def generate_pdf(
             raise HTTPException(500, detail=results[0].error_message or "Crawl failed")
         pdf_data = results[0].pdf
         art = _store_artifact("pdf", pdf_data)
-        return {"success": True, "pdf": base64.b64encode(pdf_data).decode(), **art}
+        response = {"success": True, "pdf": base64.b64encode(pdf_data).decode(), **art}
+        if legacy_output_path:
+            response["warning"] = _OUTPUT_PATH_WARNING
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -879,7 +928,7 @@ async def crawl(
     if not crawl_request.urls:
         raise HTTPException(400, "At least one URL required")
     if crawl_request.hooks and not HOOKS_ENABLED:
-        raise HTTPException(403, "Hooks are disabled. Set CRAWL4AI_HOOKS_ENABLED=true to enable.")
+        _reject_disabled_hooks(crawl_request.hooks)
     # Check whether it is a redirection for a streaming request
     try:
         crawler_config = CrawlerRunConfig.load(
@@ -889,7 +938,7 @@ async def crawl(
         raise HTTPException(400, f"Rejected config: {e}")
     if crawler_config.stream:
         return await stream_process(crawl_request=crawl_request)
-    
+
     # Prepare hooks config if provided
     hooks_config = None
     if crawl_request.hooks:
@@ -897,7 +946,7 @@ async def crawl(
             'hooks': crawl_request.hooks.hooks,
             'timeout': crawl_request.hooks.timeout
         }
-    
+
     results = await handle_crawl_request(
         urls=crawl_request.urls,
         browser_config=crawl_request.browser_config,
@@ -906,9 +955,11 @@ async def crawl(
         hooks_config=hooks_config,
         crawler_configs=crawl_request.crawler_configs,
     )
-    # check if all of the results are not successful
-    if all(not result["success"] for result in results["results"]):
-        raise HTTPException(500, f"Crawl request failed: {results['results'][0]['error_message']}")
+    if crawl_request.hooks and crawl_request.hooks.code:
+        hooks_resp = results.setdefault("hooks", {"status": "ignored", "attached": []})
+        if not crawl_request.hooks.hooks:
+            hooks_resp["status"] = "ignored"
+        hooks_resp["warning"] = _HOOKS_CODE_WARNING
     return JSONResponse(results)
 
 
@@ -922,12 +973,12 @@ async def crawl_stream(
     if not crawl_request.urls:
         raise HTTPException(400, "At least one URL required")
     if crawl_request.hooks and not HOOKS_ENABLED:
-        raise HTTPException(403, "Hooks are disabled. Set CRAWL4AI_HOOKS_ENABLED=true to enable.")
+        _reject_disabled_hooks(crawl_request.hooks)
 
     return await stream_process(crawl_request=crawl_request)
 
 async def stream_process(crawl_request: CrawlRequestWithHooks):
-    
+
     # Prepare hooks config if provided# Prepare hooks config if provided
     hooks_config = None
     if crawl_request.hooks:
@@ -953,6 +1004,8 @@ async def stream_process(crawl_request: CrawlRequestWithHooks):
     if hooks_info:
         import json
         headers["X-Hooks-Status"] = json.dumps(hooks_info['status']['status'])
+    if crawl_request.hooks and crawl_request.hooks.code:
+        headers["X-Hooks-Warning"] = _HOOKS_CODE_WARNING
     
     return StreamingResponse(
         stream_results(crawler, gen),

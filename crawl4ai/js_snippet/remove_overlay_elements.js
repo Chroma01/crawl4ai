@@ -119,13 +119,11 @@ async () => {
     };
 
     // Remove margin-right and padding-right from body (often added by modal scripts)
-    if (document.body) {
-        document.body.style.marginRight = "0px";
-        document.body.style.paddingRight = "0px";
-        document.body.style.overflow = "auto";
+    document.body.style.marginRight = "0px";
+    document.body.style.paddingRight = "0px";
+    document.body.style.overflow = "auto";
 
-        // Wait a bit for any animations to complete
-        document.body.scrollIntoView(false);
-    }
+    // Wait a bit for any animations to complete
+    document.body.scrollIntoView(false);
     await new Promise((resolve) => setTimeout(resolve, 50));
 };
