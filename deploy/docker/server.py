@@ -292,6 +292,14 @@ if ASSETS_DIR.exists():
 async def root():
     return RedirectResponse("/playground")
 
+
+# Pre-0.9 docs pointed at /monitor for the dashboard UI, which now lives at
+# /dashboard; /monitor is the monitoring API prefix and has no page of its own.
+# Only this exact path redirects - /monitor/* stays gated (see public_paths).
+@app.get("/monitor", include_in_schema=False)
+async def monitor_ui_redirect():
+    return RedirectResponse("/dashboard")
+
 # ─────────────────── infra / middleware  ─────────────────────
 redis = aioredis.from_url(_build_redis_url(config))
 
@@ -392,7 +400,10 @@ def _current_api_token() -> str:
 app.add_middleware(
     AuthGateMiddleware,
     token_provider=_current_api_token,
-    public_paths={HEALTH_PATH, "/token", "/"},
+    # Exact paths only: "/monitor" reaches the redirect above, while every
+    # "/monitor/*" API route (incl. /monitor/ws and the admin actions) keeps
+    # requiring a credential.
+    public_paths={HEALTH_PATH, "/token", "/", "/monitor"},
     public_prefixes=_UI_PREFIXES,
 )
 

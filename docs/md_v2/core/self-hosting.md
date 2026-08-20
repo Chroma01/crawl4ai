@@ -1495,9 +1495,10 @@ Access the **built-in real-time monitoring dashboard** for complete operational 
 http://localhost:11235/dashboard
 ```
 
-> ⚠️ The dashboard UI lives at `/dashboard` — **not** `/monitor`, which is the
-> API namespace (`/monitor/health`, `/monitor/ws`, …) and returns
-> `{"detail": "Authentication required"}` in a browser. On the dashboard, paste
+> ⚠️ The dashboard UI lives at `/dashboard`. `/monitor` is the API namespace
+> (`/monitor/health`, `/monitor/ws`, …); older docs pointed there, so that exact
+> URL now redirects to `/dashboard` for convenience — the `/monitor/*` routes
+> themselves still require a token. On the dashboard, paste
 > your API token into the **API token** bar (top right) and click **Set**; the
 > WebSocket then connects and live stats appear.
 

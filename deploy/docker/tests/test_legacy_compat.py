@@ -1,8 +1,9 @@
 """
 Behavioral tests for 0.9.x legacy-compatibility handling:
 
-  * root redirect   - "/" is public and redirects to /playground instead of
-                      dying in the auth gate with a bare 401; /monitor and the
+  * UI redirects    - "/" and "/monitor" are public and redirect to
+                      /playground and /dashboard instead of dying in the auth
+                      gate with a bare 401; the /monitor/* API routes and the
                       data routes stay gated.
   * output_path     - /screenshot and /pdf still accept the 0.8.x output_path
                       field but return a warning saying no file was written,
@@ -30,10 +31,10 @@ def _bearer() -> dict:
     return {"Authorization": f"Bearer {create_access_token({'sub': 'user@x.com'}, scope='data')}"}
 
 
-# ───────────────────────── root redirect ─────────────────────────
+# ───────────────────────── UI redirects ─────────────────────────
 
 
-class TestRootRedirect:
+class TestUiRedirects:
     def test_root_is_public_and_redirects_to_playground(self, stock_client):
         r = stock_client.get("/", follow_redirects=False)
         assert r.status_code in (302, 307), (
@@ -42,13 +43,43 @@ class TestRootRedirect:
         )
         assert r.headers["location"] == "/playground"
 
-    def test_monitor_and_data_routes_stay_gated(self, stock_client):
-        # /monitor must not serve content without a token; a future
-        # /monitor -> /dashboard redirect is fine (the target is UI-public),
-        # so accept 401 or a redirect, never 200.
+    def test_monitor_redirects_to_dashboard(self, stock_client):
+        # Pre-0.9 docs sent people to /monitor for the dashboard UI. That exact
+        # path redirects to /dashboard (UI-public) instead of dead-ending in the
+        # auth gate with a bare 401.
         r = stock_client.get("/monitor", follow_redirects=False)
-        assert r.status_code in (401, 302, 307, 308)
-        assert stock_client.get("/monitor/health").status_code == 401
+        assert r.status_code in (302, 307), (
+            f"GET /monitor returned {r.status_code}; expected a redirect. The "
+            f"auth gate must allow the exact path '/monitor' so the route runs."
+        )
+        assert r.headers["location"] == "/dashboard"
+
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("get", "/monitor/health"),
+            ("get", "/monitor/requests"),
+            ("get", "/monitor/browsers"),
+            ("get", "/monitor/timeline"),
+            ("get", "/monitor/logs/errors"),
+            ("post", "/monitor/actions/cleanup"),
+            ("post", "/monitor/actions/kill_browser"),
+            ("post", "/monitor/stats/reset"),
+        ],
+    )
+    def test_monitor_api_routes_stay_gated(self, stock_client, method, path):
+        # The redirect above is exact-path only. Making the /monitor *prefix*
+        # public would expose request logs, browser state and the destructive
+        # admin actions without a credential.
+        assert getattr(stock_client, method)(path).status_code == 401
+
+    def test_monitor_websocket_stays_gated(self, stock_client):
+        # /monitor/ws is where live stats stream; it must not open unauthenticated.
+        with pytest.raises(Exception):
+            with stock_client.websocket_connect("/monitor/ws"):
+                pass
+
+    def test_data_routes_stay_gated(self, stock_client):
         assert stock_client.post("/crawl", json={"urls": ["https://x"]}).status_code == 401
 
 
