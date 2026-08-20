@@ -171,11 +171,17 @@ class PDFContentScrapingStrategy(ContentScrapingStrategy):
                 # Redirects are followed manually so url_validator (when set) can vet every hop BEFORE it is fetched
                 from urllib.parse import urljoin
                 current_url = url
+                # One Session for the whole chain: a bare requests.get() per hop
+                # starts with an empty cookie jar, so a host that sets a cookie
+                # and then redirects (common for gated/CDN-signed PDFs) would
+                # get its own cookie back. allow_redirects=True used to carry
+                # them for us; following hops by hand means we carry them here.
+                session = requests.Session()
                 for _ in range(MAX_PDF_DOWNLOAD_REDIRECTS):
                     if self.url_validator:
                         self.url_validator(current_url)
-                    response = requests.get(current_url, stream=True, timeout=(20, 60 * 10),
-                                            allow_redirects=False)
+                    response = session.get(current_url, stream=True, timeout=(20, 60 * 10),
+                                           allow_redirects=False)
                     if response.is_redirect:
                         location = response.headers.get("location")
                         response.close()  # hop response holds its connection open (stream=True)
