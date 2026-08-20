@@ -31,16 +31,16 @@ async def test_stream_handler_preserves_requested_scraping_strategy(monkeypatch)
     monkeypatch.syspath_prepend(str(docker_dir))
 
     api = importlib.import_module("api")
-    crawler_pool = importlib.import_module("crawler_pool")
     egress_broker = importlib.import_module("egress_broker")
     governor = importlib.import_module("governor")
 
     crawler = MagicMock()
     crawler.arun_many = AsyncMock(return_value=MagicMock())
+    crawler.start = AsyncMock()
     monkeypatch.setattr(api, "_normalize_and_validate_seeds", lambda urls: urls)
     monkeypatch.setattr(egress_broker, "enforce_egress", lambda _: None)
     monkeypatch.setattr(governor, "clamp_deep_crawl", lambda _: None)
-    monkeypatch.setattr(crawler_pool, "get_crawler", AsyncMock(return_value=crawler))
+    monkeypatch.setattr(api, "AsyncWebCrawler", MagicMock(return_value=crawler))
 
     crawler_config = {
         "type": "CrawlerRunConfig",
