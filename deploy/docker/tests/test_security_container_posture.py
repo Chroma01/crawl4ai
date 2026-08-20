@@ -104,7 +104,14 @@ class TestCompose:
         assert "shm_size" in compose
 
     def test_pids_limit(self, compose):
-        assert "pids_limit" in compose
+        # Parse, don't grep: a raw-text search matched the word "pids_limit"
+        # inside a comment and guarded nothing. The cap lives under
+        # deploy.resources.limits (not pids_limit) for Compose v5 compatibility.
+        import yaml
+
+        base = yaml.safe_load(compose)["x-base-config"]
+        assert "pids_limit" not in base
+        assert base["deploy"]["resources"]["limits"]["pids"] == 512
 
     def test_read_only_runtime_tmpfs_are_appuser_owned(self, compose):
         assert "/var/lib/redis:uid=999,gid=999,mode=0700" in compose
