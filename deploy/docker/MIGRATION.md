@@ -25,12 +25,13 @@ loopback by default and will not expose itself without a credential.
 export CRAWL4AI_API_TOKEN="$(openssl rand -hex 32)"
 ```
 
-> ⚠️ **Docker Compose users:** `export` alone does **not** work — the shipped
-> `docker-compose.yml` does not forward host environment variables. Set the
-> token in the `.llm.env` file at the project root instead (the example file
-> ships an empty `CRAWL4AI_API_TOKEN=` line — fill it in).
->
-> For plain `docker run`, pass it explicitly:
+With `docker compose`, run the export in the same shell before
+`docker compose up`; the compose file passes the token into the container.
+For a persistent setup, put the `CRAWL4AI_API_TOKEN=...` line in a `.env`
+file in the project root instead — compose reads it automatically (a shell
+export still takes precedence).
+
+> ⚠️ For plain `docker run`, pass it explicitly:
 > `-e CRAWL4AI_API_TOKEN="$CRAWL4AI_API_TOKEN"` (the value-less shorthand
 > `-e CRAWL4AI_API_TOKEN` silently passes empty from a shell where the variable
 > isn't set).

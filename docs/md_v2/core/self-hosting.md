@@ -62,7 +62,7 @@ When you self-host, you can scale from a single container to a full browser infr
 ## Prerequisites
 
 Before we dive in, make sure you have:
-- Docker installed and running (version 20.10.0 or higher), including `docker compose` (usually bundled with Docker Desktop).
+- Docker installed and running (version 20.10.0 or higher), including `docker compose` v2.24+ (usually bundled with Docker Desktop).
 - `git` for cloning the repository.
 - At least 4GB of RAM available for the container (more recommended for heavy use).
 - Python 3.10+ (if using the Python SDK).
@@ -212,29 +212,36 @@ cd crawl4ai
 
 #### 2. Environment Setup (Required)
 
-The compose file loads `.llm.env` from the **project root directory** — the
-file must exist even if you don't use LLMs, or compose will fail with
-"env file .llm.env not found". Create it from the example and add an API token:
+Export an API token in your shell — the compose file passes it into the
+container. **Required**, or the server will be unreachable (loopback-only,
+published port → connection reset):
+
+```bash
+export CRAWL4AI_API_TOKEN="$(openssl rand -hex 32)"
+```
+
+Prefer a file? Put the same line in a `.env` file in the project root —
+compose reads it automatically on every run, no export needed (if both are
+set, the shell export wins):
+
+```bash
+echo "CRAWL4AI_API_TOKEN=$(openssl rand -hex 32)" > .env
+```
+
+If you use LLMs, also create `.llm.env` in the **project root directory** with
+your API keys (optional — compose starts fine without it):
 
 ```bash
 # Make sure you are in the 'crawl4ai' root directory
 cp deploy/docker/.llm.env.example .llm.env
+
+# Now edit .llm.env and add your LLM API keys
 ```
 
-Then open `.llm.env` and fill in the `CRAWL4AI_API_TOKEN=` line at the top —
-**required**, or the server will be unreachable (loopback-only). Any long
-random string works, e.g. from `openssl rand -hex 32`. One-liner:
-
-```bash
-sed -i.bak "s|^CRAWL4AI_API_TOKEN=.*|CRAWL4AI_API_TOKEN=$(openssl rand -hex 32)|" .llm.env && rm .llm.env.bak
-```
-
-Optionally add your LLM API keys in the same file.
-
-> ⚠️ **The token must go inside `.llm.env`.** `export CRAWL4AI_API_TOKEN=...`
-> in your shell does **not** work with compose — the compose file does not
-> forward host environment variables, and the server silently starts in
-> loopback-only mode (published port → connection reset).
+> ⚠️ Run the export in the **same shell** you run `docker compose up` from.
+> With compose, only the shell export or a `.env` line carries the token — a
+> `CRAWL4AI_API_TOKEN=` line in `.llm.env` is overridden by the compose
+> passthrough.
 
 **Flexible LLM Provider Configuration:**
 
@@ -305,7 +312,7 @@ The `docker-compose.yml` file in the project root provides a simplified approach
 
 > The server will be available at `http://localhost:11235` (allow ~10 seconds
 > for startup). All endpoints except `GET /health` require
-> `Authorization: Bearer <your token from .llm.env>`.
+> `Authorization: Bearer <your exported token>`.
 
 #### 4. Stopping the Service
 
