@@ -214,6 +214,29 @@ UNTRUSTED_FORBIDDEN_FIELDS = {
         "override_navigator", "magic", "process_in_browser", "shared_data",
         "session_id",
     },
+    # PDFContentScrapingStrategy has no scalar allowlist (it is kept for its
+    # value fields), so its filesystem-write knobs must be blocked explicitly:
+    # image_save_dir is an unconfined write destination and save_images_locally
+    # turns the write on. extract_images stays allowed - it only returns the
+    # image bytes base64-inline in the response, no disk write.
+    "PDFContentScrapingStrategy": {
+        "image_save_dir", "save_images_locally",
+    },
+}
+
+# Field names that must NEVER be set from an untrusted body on ANY allowed
+# type, checked regardless of per-type allowlist. This is the fail-closed
+# backstop: the per-type maps above only cover BrowserConfig/CrawlerRunConfig,
+# so a strategy that (now or in future) exposes a filesystem-write, code, or
+# routing constructor arg is caught here even with no explicit allowlist.
+# Presence => 400 (loud), matching js_code/extra_args behavior.
+UNTRUSTED_GLOBAL_FORBIDDEN_FIELDS = {
+    # filesystem write / read sinks
+    "image_save_dir", "save_images_locally", "downloads_path", "user_data_dir",
+    "output_path", "save_path", "file_path", "local_path", "storage_state",
+    # code / command execution
+    "js_code", "js_code_before_wait", "c4a_script", "init_scripts",
+    "code", "command", "hook", "hooks",
 }
 
 # Scalar knobs an untrusted body MAY set, per class. A field not listed here is
@@ -281,7 +304,7 @@ def _filter_untrusted_fields(type_name: str, params: dict) -> dict:
     allowlist = UNTRUSTED_FIELD_ALLOWLIST.get(type_name)  # None => keep all non-forbidden
     out = {}
     for key, value in params.items():
-        if key in forbidden:
+        if key in UNTRUSTED_GLOBAL_FORBIDDEN_FIELDS or key in forbidden:
             raise UntrustedConfigError(
                 f"field '{key}' is not permitted on {type_name} from an untrusted request"
             )
