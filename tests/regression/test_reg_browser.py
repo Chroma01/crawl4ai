@@ -7,6 +7,7 @@ stealth mode, session management, network capture, and anti-bot features using
 real browser crawling with no mocking.
 """
 
+import asyncio
 import base64
 import time
 
@@ -35,6 +36,87 @@ async def test_browser_lifecycle(local_server):
         assert len(result.html) > 0, "HTML should be non-empty"
     finally:
         await crawler.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_browser_launch_leaves_no_driver(monkeypatch):
+    """Issue #2155: a browser-launch failure inside __aenter__ must roll back
+    partial startup — no leaked Playwright driver process, no half-built state.
+
+    Launch failure is forced by pointing PLAYWRIGHT_BROWSERS_PATH at an empty
+    directory, so the driver starts but the browser executable is missing.
+    """
+    import tempfile
+
+    import psutil
+
+    from crawl4ai.browser_manager import BrowserManager
+
+    monkeypatch.setenv(
+        "PLAYWRIGHT_BROWSERS_PATH", tempfile.mkdtemp(prefix="c4ai-no-browsers-")
+    )
+    before = {p.pid for p in psutil.Process().children(recursive=True)}
+
+    manager = BrowserManager(browser_config=BrowserConfig(headless=True))
+    with pytest.raises(Exception, match="Executable doesn't exist"):
+        await manager.start()
+
+    # Half-built state must be rolled back (this also proves the driver was
+    # stopped, since only close()/stop() reset it).
+    assert manager.playwright is None, "playwright driver not rolled back"
+    assert manager.browser is None, "browser reference not rolled back"
+
+    # No Playwright driver child process may survive the failed start.
+    await asyncio.sleep(0.5)  # allow the stopped subprocess to be reaped
+    leaked = []
+    for child in psutil.Process().children(recursive=True):
+        if child.pid in before:
+            continue
+        try:
+            cmd = " ".join(child.cmdline())
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if "playwright" in cmd and "run-driver" in cmd:
+            leaked.append(child.pid)
+    assert leaked == [], f"leaked Playwright driver process(es): {leaked}"
+
+
+@pytest.mark.asyncio
+async def test_failed_cached_cdp_connect_leaves_no_driver():
+    """Issue #2155: a failed connect inside _CDPConnectionCache.acquire() must
+    stop the driver it started (the manager never sees it, so start()'s
+    rollback alone cannot clean it up)."""
+    import psutil
+
+    from crawl4ai.browser_manager import BrowserManager
+
+    before = {p.pid for p in psutil.Process().children(recursive=True)}
+    config = BrowserConfig(
+        headless=True,
+        cdp_url="http://127.0.0.1:9",  # unreachable endpoint
+        cache_cdp_connection=True,
+    )
+    manager = BrowserManager(browser_config=config)
+    # Matching on connect_over_cdp proves the driver was already started
+    # when the failure happened (the scenario under test).
+    with pytest.raises(Exception, match="connect_over_cdp"):
+        await manager.start()
+
+    assert manager.playwright is None
+    assert manager.browser is None
+
+    await asyncio.sleep(0.5)
+    leaked = []
+    for child in psutil.Process().children(recursive=True):
+        if child.pid in before:
+            continue
+        try:
+            cmd = " ".join(child.cmdline())
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if "playwright" in cmd and "run-driver" in cmd:
+            leaked.append(child.pid)
+    assert leaked == [], f"leaked Playwright driver process(es): {leaked}"
 
 
 @pytest.mark.asyncio
