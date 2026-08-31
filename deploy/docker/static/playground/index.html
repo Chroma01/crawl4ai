@@ -1000,9 +1000,11 @@
             // Save current scroll position (important for large code blocks)
             const scrollTop = element.parentElement.scrollTop;
 
-            // Reset the element
-            const text = element.textContent;
-            element.innerHTML = text;
+            // Reset highlight.js state. NOTE: do NOT round-trip through
+            // innerHTML here — the response text contains attacker-controlled
+            // crawled content and `element.innerHTML = element.textContent`
+            // re-parses it as live HTML (DOM-based XSS). highlight.js renders
+            // safely from textContent and emits escaped markup.
             element.removeAttribute('data-highlighted');
 
             // Reapply highlighting

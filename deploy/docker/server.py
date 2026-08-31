@@ -159,6 +159,37 @@ async def capped_arun(self, *a, **kw):
         return await orig_arun(self, *a, **kw)
 AsyncWebCrawler.arun = capped_arun
 
+
+def _install_pdf_egress_policy() -> None:
+    """Hand the PDF scraping strategy this server's egress policy.
+
+    PDFContentScrapingStrategy is in UNTRUSTED_ALLOWED_TYPES, so any API client
+    can select it and name the URL. It downloads with requests rather than the
+    browser, so none of the Chromium-side pinning applies to it. Injecting the
+    broker here makes the PDF path enforce the same non-global-IP rule on the
+    initial URL, on every redirect hop, and on the peer actually connected to.
+    """
+    from crawl4ai.processors.pdf import set_peer_ip_validator, set_url_validator
+    from egress_broker import (
+        ALLOW_INTERNAL,
+        EgressBlocked,
+        is_forbidden_ip,
+        resolve_and_pin,
+    )
+
+    def _validate_url(url: str) -> None:
+        resolve_and_pin(url)  # raises EgressBlocked on a non-global destination
+
+    def _validate_peer(ip: str) -> None:
+        if ALLOW_INTERNAL:
+            return
+        if is_forbidden_ip(ip):
+            raise EgressBlocked()
+
+    set_url_validator(_validate_url)
+    set_peer_ip_validator(_validate_peer)
+
+
 # ───────────────────── FastAPI lifespan ──────────────────────
 
 
@@ -181,6 +212,11 @@ async def lifespan(_: FastAPI):
     from egress_broker import set_egress_proxy
     app.state.egress_proxy = PinningProxy()
     set_egress_proxy(await app.state.egress_proxy.start())
+
+    # The pinning proxy only covers Chromium. PDFContentScrapingStrategy fetches
+    # with requests on its own, so hand the library the same destination policy
+    # or that path stays an unguarded SSRF hole.
+    _install_pdf_egress_policy()
 
     # Bounded background-job queue (per-principal quotas optional).
     from work_queue import WorkQueue, set_job_queue
