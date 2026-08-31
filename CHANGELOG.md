@@ -5,6 +5,32 @@ All notable changes to Crawl4AI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-08-31
+
+0.9.3 is a security release. It closes five coordinated-disclosure advisories in the PDF processing path and the Docker Playground UI. There are no new features and no breaking changes. Users who accept untrusted URLs on the Docker server, or who open PDFs from sources they do not control, should upgrade.
+
+### Security
+
+The PDF path was the common thread. `PDFContentScrapingStrategy` is selectable from an untrusted Docker API request body, and it fetches with `requests` outside the browser, so none of the Chromium-side egress or resource controls applied to it.
+
+- **Arbitrary file write via PDF image-write fields (CWE-22, high)**: `PDFContentScrapingStrategy` had no field allowlist, so an untrusted request body could set `save_images_locally` and `image_save_dir` and make the server write extracted images to a path of the caller's choosing. Those fields are now filtered at the trust boundary and `extract_images` is forced off for untrusted bodies. Credit: Zhixi "Jace" Sun. (GHSA-xpp7-j28w-2gvx)
+- **SSRF via PDF download redirects (CWE-918, high)**: the PDF download followed redirects without consulting any destination policy, so a public URL that redirected to an internal address reached it. Redirects are now resolved by hand with a per-hop destination check, bounded at five hops, and the peer IP of the response actually read back is validated to close DNS rebinding. The Docker server installs its egress policy into this path at boot. Credit: Nguyen Tran Thanh Lam ([c240030](https://github.com/c240030)). (GHSA-q5rj-45vw-vp2g)
+- **Denial of service via unbounded PDF size and page count (CWE-400, medium)**: a remote PDF was streamed to disk and parsed with no cap on bytes or pages. Downloads now stop at `max_pdf_bytes` (100 MiB default), enforced on the running total rather than the caller-supplied `content-length`, and parsing stops at `max_pdf_pages` (2000 default). Untrusted bodies cannot raise their own caps. The Docker config now ships a non-zero `limits.wall_clock_s` of 300 seconds. Credit: Nguyen Tran Thanh Lam ([c240030](https://github.com/c240030)). (GHSA-v2rm-hvrj-2x9q)
+- **XSS via unescaped PDF text in `cleaned_html` (CWE-79, medium)**: paragraph text taken verbatim from a PDF was written into `cleaned_html` without escaping, so markup embedded in a PDF survived into the result and executed when rendered. Paragraph text is now escaped like every other sink in that function. Credit: Nguyen Tran Thanh Lam ([c240030](https://github.com/c240030)). (GHSA-7g3g-vhm6-79f3)
+- **DOM-based XSS in the Docker Playground leading to API token theft (CWE-79, high)**: the result viewer reset syntax highlighting with `element.innerHTML = element.textContent`, which re-parsed attacker-controlled crawled content as live HTML in the operator's session. The round trip is removed; highlight.js renders safely from `textContent`. Credit: [e1codes](https://github.com/e1codes). (GHSA-m446-hp3q-qfxp)
+
+All reporters are credited in `SECURITY-CREDITS.md`. GitHub Security Advisories accompany this release.
+
+### Tests
+
+- `tests/unit/test_pdf_download_limits.py`: 22 tests covering per-hop destination validation, DNS rebinding, redirect bounds, byte and page caps, and untrusted-body clamping.
+- `tests/unit/test_pdf_html_escaping.py`: escaping of PDF paragraph text in `cleaned_html`.
+- `deploy/docker/tests/test_security_pdf_image_write.py`: rejection of image-write fields from untrusted bodies.
+
+### Breaking Changes
+
+None.
+
 ## [0.9.0] - 2026-06-18
 
 0.9.0 is a major, secure-by-default release of the Crawl4AI Docker API server. The out-of-the-box deployment is now hardened with defense in depth: authentication is on by default, the server binds loopback unless you give it a token, and the network request body is treated as an untrusted trust boundary. This release contains breaking changes for the self-hosted HTTP server only. The core pip library (SDK / in-process use) is unchanged.
