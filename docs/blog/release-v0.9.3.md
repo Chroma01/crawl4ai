@@ -23,7 +23,7 @@ If you self-host the Docker server and accept crawl requests from clients you do
 
 ### Arbitrary file write via PDF image-write fields
 
-**GHSA-xpp7-j28w-2gvx, CWE-22, high.** Credit: Zhixi "Jace" Sun, independent security researcher.
+**GHSA-xpp7-j28w-2gvx, CWE-22, high.** Credit: Zhixi "Jace" Sun ([manus-use](https://github.com/manus-use)).
 
 `PDFContentScrapingStrategy` was in the untrusted-allowed type list but had no field allowlist of its own. A request body could therefore set `save_images_locally: true` and `image_save_dir` to any path, and the server would write extracted PDF images there.
 
@@ -136,7 +136,7 @@ docker pull unclecode/crawl4ai:0.9.3
 
 ## Acknowledgments
 
-Thank you to Zhixi "Jace" Sun, Nguyen Tran Thanh Lam ([c240030](https://github.com/c240030)), and [e1codes](https://github.com/e1codes) for reporting these issues privately and giving us time to fix them before disclosure. All reporters are listed in [SECURITY-CREDITS.md](https://github.com/unclecode/crawl4ai/blob/main/SECURITY-CREDITS.md).
+Thank you to Zhixi "Jace" Sun ([manus-use](https://github.com/manus-use)), Nguyen Tran Thanh Lam ([c240030](https://github.com/c240030)), and [e1codes](https://github.com/e1codes) for reporting these issues privately and giving us time to fix them before disclosure. All reporters are listed in [SECURITY-CREDITS.md](https://github.com/unclecode/crawl4ai/blob/main/SECURITY-CREDITS.md).
 
 Thanks to the community contributors behind the bug fixes in this release: @nightcityblade (#2130, #2131, #2117, #2134, #2081), @weike-zhang (#2148), and @Nalhin (#2163).
 
