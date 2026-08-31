@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.3] - 2026-08-31
 
-0.9.3 is a security release. It closes five coordinated-disclosure advisories in the PDF processing path and the Docker Playground UI. There are no new features and no breaking changes. Users who accept untrusted URLs on the Docker server, or who open PDFs from sources they do not control, should upgrade.
+0.9.3 is a security release. It closes five coordinated-disclosure advisories in the PDF processing path and the Docker Playground UI, and ships the 33 bug fixes that accumulated on `develop` since 0.9.2, most of them in the Docker server. There are no new features and no breaking changes. Users who accept untrusted URLs on the Docker server, or who open PDFs from sources they do not control, should upgrade.
 
 ### Security
 
@@ -21,11 +21,45 @@ The PDF path was the common thread. `PDFContentScrapingStrategy` is selectable f
 
 All reporters are credited in `SECURITY-CREDITS.md`. GitHub Security Advisories accompany this release.
 
+### Fixed
+
+This release also carries the bug fixes that accumulated on `develop` since 0.9.2.
+
+**Docker server**
+
+- PDF scraping is supported by default, and requests selecting `PDFContentScrapingStrategy` are routed to `PDFCrawlerStrategy` so the pairing works without extra configuration. (#2094, #2150)
+- The egress proxy chains through an upstream `HTTP_PROXY` / `HTTPS_PROXY` instead of ignoring it. (#2142)
+- Junk proxy environment values fall through to the next candidate, and non-http proxy schemes are refused. (#2094)
+- Compose v5 compatibility, clearer warnings on legacy fields, and better playground error handling. (#2094)
+- `CRAWL4AI_API_TOKEN` is forwarded through compose, and `.llm.env` is optional rather than required. (#2094)
+- The disabled-hooks 403 distinguishes the removed `hooks.code` field from other rejections. (#2094)
+- `output_path` is declared a deprecated no-op rather than silently ignored. (#2094)
+- `GET /monitor` redirects to the dashboard UI. (#2157, issue #2091)
+- Failed crawl results are preserved instead of dropped, for both batch and single-URL requests. (#2094, #2134, issue #2133)
+- An unavailable IPv6 loopback no longer breaks startup. (#2081, issue #2078)
+- `mcp` is capped below 2 so the v1 low-level API used by `mcp_bridge` keeps working. (#2148, thanks @weike-zhang)
+- Commented environment variable lines in compose are aligned with the environment list. (#2156)
+
+**Crawler and core**
+
+- `ManagedBrowser` no longer leaks a Playwright driver process when the browser fails to launch inside `__aenter__`. (#2160)
+- `PDFCrawlerStrategy` placeholder responses are no longer vetoed as anti-bot blocks, which previously failed every PDF crawl and burned the retry budget. (#2138, issue #2135)
+- Cookies are carried across manual PDF redirect hops, so gated and CDN-signed PDFs download correctly. (#2159)
+- Unconditional `setTimeout` waits are removed from the overlay and consent removal scripts, which could hang a crawl under a restrictive CSP. (#2139)
+- `remove_overlay_elements` no longer removes `<body>` when the body carries a global popup class. (#2163, thanks @Nalhin)
+- The body-visibility timeout is configurable and validated, and the timeout warning is emitted even with `verbose=False`. (#2117, #2131, #2145, issues #2116, #2129, #2144)
+
+**Documentation**
+
+- Self-hosting and migration guides updated for 0.9.x. (#2093)
+- The `PDFCrawlerStrategy` plus `PDFContentScrapingStrategy` pairing requirement is documented.
+
 ### Tests
 
 - `tests/unit/test_pdf_download_limits.py`: 22 tests covering per-hop destination validation, DNS rebinding, redirect bounds, byte and page caps, and untrusted-body clamping.
 - `tests/unit/test_pdf_html_escaping.py`: escaping of PDF paragraph text in `cleaned_html`.
 - `deploy/docker/tests/test_security_pdf_image_write.py`: rejection of image-write fields from untrusted bodies.
+- Docker endpoint coverage for crawl failures and for the per-URL `crawler_configs` PDF guard.
 
 ### Breaking Changes
 
